@@ -193,7 +193,7 @@
 
 (defun show-tag-header (file)
   (with-slots (identifier major-version revision flags size) (read-id3 file)
-    (format t "~a ~d. ~d ~8,'0b ~d bytes -- ~a~%" 
+    (format t "~a ~d.~d ~8,'0b ~d bytes -- ~a~%" 
 	    identifier major-version revision flags size (enough-namestring file))))
 
 (defun mp3-p (file)
@@ -232,10 +232,19 @@
      (declare (ignore size))
      (write-sequence buf out)))
 
-(defun find-frame-class (id)
-  (ecase (length id)
-    (3 'generic-frame-v2.2)
-    (4 'generic-frame-v2.3)))
+(defun find-frame-class (name)
+  (cond
+    ((and (char= (char name 0) #\T)
+	  (not (member name '("TXX" "TXXX") :test #'string=)))
+     (ecase (length name)
+       (3 'text-info-frame-v2.2)
+       (4 'text-info-frame-v2.3)))
+    ((string= name "COM")  'comment-frame-v2.2)
+    ((string= name "COMM") 'comment-frame-v2.3)
+    (t
+     (ecase (length name)
+       (3 'generic-frame-v2.2)
+       (4 'generic-frame-v2.3)))))
 
 (define-condition in-padding () ())
 
@@ -267,3 +276,131 @@
 (define-binary-class generic-frame-v2.2 (id3v2.2-frame generic-frame) ())
 (define-binary-class generic-frame-v2.3 (id3v2.3-frame generic-frame) ())
 
+(defun frame-types (file)
+  (delete-duplicates (mapcar #'id (frames (read-id3 file))) :test #'string=))
+
+(defun frame-types-in-dir (dir)
+  (let ((ids ()))
+    (flet ((collect (file)
+	     (setf ids (nunion ids (frame-types file) :test #'string=))))
+      (walk-directory dir #'collect :test #'mp3-p))
+    ids))
+
+(defun non-terminated-type (encoding)
+  (ecase encoding
+    (0 'iso-8859-1-string)
+    (1 'ucs-2-string)))
+
+(defun terminated-type (encoding)
+  (ecase encoding
+    (0 'iso-8859-1-terminated-string)
+    (1 'ucs-2-terminated-string)))
+
+(defun string-args (encoding length terminator)
+  (cond
+    (length
+     (values (non-terminated-type encoding) :length length))
+    (terminator
+     (values (terminated-type encoding) :terminator terminator))))
+
+(define-binary-type id3-encoded-string (encoding length terminator)
+  (:reader (in)
+	   (multiple-value-bind (type keyword arg)
+	       (string-args encoding length terminator)
+	     (read-value type in keyword arg)))
+  (:writer (out string)
+	   (multiple-value-bind (type keyword arg)
+	       (string-args encoding length terminator)
+	     (write-value type out string keyword arg))))
+
+(define-binary-class text-info-frame ()
+  ((encoding u1)
+   (information (id3-encoded-string :encoding encoding :length (bytes-left 1)))))
+
+(defun bytes-left (bytes-read)
+  (- (size (current-binary-object)) bytes-read))
+
+(define-binary-class text-info-frame-v2.2 (id3v2.2-frame text-info-frame) ())
+(define-binary-class text-info-frame-v2.3 (id3v2.3-frame text-info-frame) ())
+
+(define-binary-class comment-frame ()
+  ((encoding u1)
+   (language (iso-8859-1-string :length 3))
+   (description (id3-encoded-string :encoding encoding :terminator +null+))
+   (text (id3-encoded-string
+	  :encoding encoding
+	  :length (bytes-left
+		   (+ 1 		; encoding
+		      3			; language
+		      (encoded-string-length description encoding t)))))))
+
+(defun encoded-string-length (string encoding terminated)
+  (let ((characters (+ (length string) (if terminated 1 0))))
+    (* characters (ecase encoding (0 1) (1 2)))))
+
+(define-binary-class comment-frame-v2.2 (id3v2.2-frame comment-frame) ())
+(define-binary-class comment-frame-v2.3 (id3v2.3-frame comment-frame) ())
+
+(defun upto-null (string)
+  (subseq string 0 (position +null+ string)))
+
+(defun find-frame (id3 ids)
+  (find-if #'(lambda (x) (find (id x) ids :test #'string=)) (frames id3)))
+
+(defun get-text-info (id3 &rest ids)
+  (let ((frame (find-frame id3 ids)))
+    (when frame (upto-null (information frame)))))
+
+(defun song (id3) (get-text-info id3 "TT2" "TIT2"))
+(defun album (id3) (get-text-info id3 "TAL" "TALB"))
+(defun artist (id3) (get-text-info id3 "TP1" "TPE1"))
+(defun track (id3) (get-text-info id3 "TRK" "TRCK"))
+(defun year (id3) (get-text-info id3 "TYE" "TYER" "TDRC"))
+(defun genre (id3) (get-text-info id3 "TCO" "TCON"))
+
+(defun translated-genre (id3)
+  (let ((genre (genre id3)))
+    (if (and genre (char= #\( (char genre 0)))
+	(translate-v1-genre genre)
+	genre)))
+
+(defun translate-v1-genre (genre)
+  (aref *id3-v1-genres* (parse-integer genre :start 1 :junk-allowed t)))
+
+(defparameter *id3-v1-genres*
+  #(
+    ;; These are the official ID3v1 genres
+    "Blues" "Classic Rock" "Country" "Dance" "Disco" "Funk" "Grunge"
+    "Hip-Hop" "Jazz" "Metal" "New Age" "Oldies" "Other" "Pop" "R&B" "Rap"
+    "Reggae" "Rock" "Techno" "Industrial" "Alternative" "Ska"
+    "Death Metal" "Pranks" "Soundtrack" "Euro-Techno" "Ambient"
+    "Trip-Hop" "Vocal" "Jazz+Funk" "Fusion" "Trance" "Classical"
+    "Instrumental" "Acid" "House" "Game" "Sound Clip" "Gospel" "Noise"
+    "AlternRock" "Bass" "Soul" "Punk" "Space" "Meditative"
+    "Instrumental Pop" "Instrumental Rock" "Ethnic" "Gothic" "Darkwave"
+    "Techno-Industrial" "Electronic" "Pop-Folk" "Eurodance" "Dream"
+    "Southern Rock" "Comedy" "Cult" "Gangsta" "Top 40" "Christian Rap"
+    "Pop/Funk" "Jungle" "Native American" "Cabaret" "New Wave"
+    "Psychadelic" "Rave" "Showtunes" "Trailer" "Lo-Fi" "Tribal"
+    "Acid Punk" "Acid Jazz" "Polka" "Retro" "Musical" "Rock & Roll"
+    "Hard Rock"
+
+    ;; These were made up by the authors of Winamp but backported into
+    ;; the ID3 spec.
+    "Folk" "Folk-Rock" "National Folk" "Swing" "Fast Fusion"
+    "Bebob" "Latin" "Revival" "Celtic" "Bluegrass" "Avantgarde"
+    "Gothic Rock" "Progressive Rock" "Psychedelic Rock" "Symphonic Rock"
+    "Slow Rock" "Big Band" "Chorus" "Easy Listening" "Acoustic" "Humour"
+    "Speech" "Chanson" "Opera" "Chamber Music" "Sonata" "Symphony"
+    "Booty Bass" "Primus" "Porn Groove" "Satire" "Slow Jam" "Club"
+    "Tango" "Samba" "Folklore" "Ballad" "Power Ballad" "Rhythmic Soul"
+    "Freestyle" "Duet" "Punk Rock" "Drum Solo" "A capella" "Euro-House"
+    "Dance Hall"
+
+    ;; These were also invented by the Winamp folks but ignored by the
+    ;; ID3 authors.
+    "Goa" "Drum & Bass" "Club-House" "Hardcore" "Terror" "Indie"
+    "BritPop" "Negerpunk" "Polsk Punk" "Beat" "Christian Gangsta Rap"
+    "Heavy Metal" "Black Metal" "Crossover" "Contemporary Christian"
+    "Christian Rock" "Merengue" "Salsa" "Thrash Metal" "Anime" "Jpop"
+    "Synthpop"))

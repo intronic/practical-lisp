@@ -2,7 +2,11 @@
 
 (defpackage :com.gigamonkeys.macro-utilities
   (:use :common-lisp)
-  (:export :with-gensyms))
+  (:export :with-gensyms :once-only))
+
+(defpackage :com.gigamonkeys.utilities
+  (:use :common-lisp)
+  (:export :nshuffle-vector :shuffle-vector :algorithm-s :random-sample))
 
 (defpackage :com.gigamonkeys.pathnames
   (:use :common-lisp)
@@ -17,8 +21,26 @@
    :directory-p
    :file-p))
 
+(defpackage :com.gigamonkeys.html
+  (:use :common-lisp :com.gigamonkeys.macro-utilities)
+  (:export :with-html-output
+           :with-html-to-file
+           :in-html-style
+           :define-html-macro
+           :define-css-macro
+           :css
+           :html
+           :emit-css
+           :emit-html
+           :&attributes))
+
 (defpackage :com.gigamonkeys.spam
   (:use :common-lisp :com.gigamonkeys.pathnames :cl-ppcre))
+
+(defpackage :com.gigamonkeys.web
+  (:use :common-lisp :net.aserve 
+	:com.gigamonkeys.html 
+	:com.gigamonkeys.macro-utilities))
 
 (defpackage :com.gigamonkeys.binary-data
   (:use :common-lisp :com.gigamonkeys.macro-utilities)
@@ -51,3 +73,51 @@
    :year
    :size
    :translated-genre))
+
+(defpackage :com.gigamonkeys.mp3-database
+  (:use :common-lisp 
+        :com.gigamonkeys.pathnames
+        :com.gigamonkeys.macro-utilities
+	:com.gigamonkeys.utilities
+        :com.gigamonkeys.id3v2)
+  (:export  :*default-table-size*
+            :*mp3-schema*
+            :*mp3s*
+            :column
+            :column-value
+            :delete-all-rows
+            :delete-rows
+            :do-rows
+            :extract-schema
+            :in
+            :insert-row
+            :load-database
+            :make-column
+            :make-schema
+            :map-rows
+            :matching
+            :not-nullable
+            :nth-row
+            :random-selection
+            :schema
+            :select
+            :shuffle-table
+            :sort-rows
+            :table
+            :table-size
+            :with-column-values))
+
+(defpackage :com.gigamonkeys.shoutcast
+  (:use :common-lisp 
+        :net.aserve 
+        :com.gigamonkeys.id3v2)
+  (:export :song
+           :file
+           :title
+           :id3-size
+           :find-song-source
+           :current-song
+           :still-current-p
+           :maybe-move-to-next-song
+           :*song-source-type*))
+

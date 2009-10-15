@@ -1,4 +1,3 @@
-
 (in-package :com.gigamonkeys.pathnames)
 
 (defun component-present-p (value)
